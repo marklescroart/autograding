@@ -1,2 +1,2 @@
 # 
-from .evaluate import *
+from . import evaluate

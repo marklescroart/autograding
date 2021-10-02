@@ -21,13 +21,13 @@ def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
 def main(**kwargs):
-    setup(name="""autograder""",
+    setup(name="""autograding""",
           version='0.1.0',
           description="""Code for auto-grading exams and quizzes""",
-          author='Gallant Lab',
+          author='Mark Lescroart',
           license='Unclear',
           url='gallantlab.org',
-          packages=['autograder'],
+          packages=['autograding'],
           long_description = read('README.md'),
           **kwargs)
 

@@ -22,7 +22,7 @@ def _double_gauss(x, mu1, sig1, a1, mu2, sig2, a2):
 class Evaluation(object):
     """General class for quiz or exam"""
     def __init__(self, fdir, scanned_file, answer_file, n_questions=10, n_options=4, 
-        absent_list=(), class_list_file=None):
+        absent_list=(), class_list_file=None, reverse_test_order=False):
         """Class to represent a quiz or exam. 
 
         Methods of this class set up grading, do the
@@ -55,7 +55,7 @@ class Evaluation(object):
         self.n_options = n_options
         # read test images
         self.load_class_list()
-        self.read_images()
+        self.read_images(reverse_test_order=reverse_test_order)
         self.load_answers()
         self.adjusted_points = None
         # fill absences
@@ -66,7 +66,7 @@ class Evaluation(object):
         self.mu1 = np.linspace(190, 210, 3)
         self.mu2 = np.linspace(210, 240, 3)
 
-    def read_images(self):
+    def read_images(self, reverse_test_order=False):
         with Image(filename=self.scanned_file, resolution=200) as img:
             page_images = []
             for page_wand_image_seq in img.sequence:
@@ -75,6 +75,8 @@ class Evaluation(object):
                 page_jpeg_data = io.BytesIO(page_jpeg_bytes)
                 page_image = PIL.Image.open(page_jpeg_data)
                 page_images.append(page_image)
+        if reverse_test_order:
+            page_images = page_images[::-1]
         self.test_images = page_images
 
     def load_answers(self):
@@ -325,7 +327,7 @@ class Evaluation(object):
         """Display answers chosen by a given student
         
         """
-        idx = get_student(student)
+        idx = self.get_student(student)
 
         # Lazy, this could cause bugs...
         answers = self.student_answers[idx]
@@ -358,7 +360,7 @@ class Evaluation(object):
 
         fig, ax = plt.subplots(figsize=figsize)
         test = np.array(self.test_images[idx])
-        ax.imshow(test)
+        ax.imshow(test, cmap='gray')
         xl = plt.xlim()
         yl = plt.ylim()
 
@@ -399,7 +401,7 @@ class Evaluation(object):
             
         side_edges = copy.copy(self.side_edges)
         top_edges = copy.copy(self.top_edges)
-        correct_answers = copy.copy(self.correct_answers)
+        correct_answers = copy.copy(self.multi_answer_key)
         if isinstance(side_edges, tuple):
             n_columns = len(side_edges)
         else:
@@ -424,32 +426,33 @@ class Evaluation(object):
         fig, ax = plt.subplots(figsize=figsize)
         test = np.array(self.test_images[idx])
         if show_test:
-            ax.imshow(test)
+            ax.imshow(test, cmap='gray')
             xl = plt.xlim()
             yl = plt.ylim()
         else:
             ymx, xmx, _ = test.shape
             xl = (-0.5, xmx-0.5)
             yl = (ymx-0.5, -0.5)
-        for te, se, nq, anss, canss, in zip(top_edges, side_edges, n_questions, answers, correct_answers):
+        # Loop over potentially multiple pages or columns of answer sheet
+        for te, se, nq, answers_this_part, corr_answers_this_part, in zip(top_edges, side_edges, n_questions, answers, correct_answers):
             tops = np.linspace(te[0], te[1], nq + 1)
             sides = np.linspace(se[0], se[1], n_options + 1)
             sd = np.mean(np.diff(sides))/2
             td = np.mean(np.diff(tops))/2
-            for t, tfa, ctfa in zip(tops, anss, canss):
-                tfa = np.nan_to_num(tfa)
-                ctfa = np.nan_to_num(ctfa)
-                aa, = np.nonzero(tfa)
-                ca, = np.nonzero(ctfa)
-                miss = set(ca) - set(aa)
-                false_alarm = set(aa) - set(ca)
+            for t, binary_answer_this_question, corr_binary_answer_this_question in zip(tops, answers_this_part, corr_answers_this_part):
+                binary_answer_this_question = np.nan_to_num(binary_answer_this_question)
+                corr_binary_answer_this_question = np.nan_to_num(corr_binary_answer_this_question)
+                student_answer_index, = np.nonzero(binary_answer_this_question)
+                corr_answer_index, = np.nonzero(corr_binary_answer_this_question)
+                miss = set(corr_answer_index) - set(student_answer_index)
+                false_alarm = set(student_answer_index) - set(corr_answer_index)
                 #1/0
-                for a in aa:
-                    plt.scatter(sides[int(a)] + sd, t + td, edgecolor='k', marker=ans_mk, facecolor='None')
-                for c in ca:
-                    plt.text(sides[int(c)] + sd, t + td, corr_mk, color='k', fontsize=24, ha='center', va='center')
+                for a in student_answer_index:
+                    plt.scatter(sides[int(a)] + sd, t + td, edgecolor=(1.0, 0.5, 0.0), marker=ans_mk, facecolor='None')
+                for c in corr_answer_index:
+                    plt.text(sides[int(c)] + sd, t + td, corr_mk, color='g', fontsize=24, ha='center', va='center')
                 for x in false_alarm:
-                    plt.text(sides[int(x)] + sd, t + td, wrong_mk, color='k', fontsize=24, ha='center', va='center')
+                    plt.text(sides[int(x)] + sd, t + td, wrong_mk, color='r', fontsize=24, ha='center', va='center')
         plt.xlim(xl)
         plt.ylim(yl)
         ax.set_position([0,0,1,1])
