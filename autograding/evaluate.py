@@ -488,10 +488,10 @@ class Evaluation(object):
         for iquestion, ans in enumerate(self.correct_answers):
             for a in ans:
                 try:
-                    ii = "ABCDE".index(a)
+                    ii = "ABCDE".index(a.upper())
                     n_tf = n_options
                 except:
-                    ii = "TF".index(a)
+                    ii = "TF".index(a.upper())
                     n_tf = 2
                 multi_answer_key[iquestion, ii] = 1
             multi_answer_n[iquestion] = n_tf
