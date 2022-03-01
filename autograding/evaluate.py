@@ -423,14 +423,14 @@ class Evaluation(object):
             correct_answers = tuple([correct_answers[st:fin] for st, fin in zip(qbounds[:-1], qbounds[1:])])
             #print([len(a) for a in correct_answers])
 
-        fig, ax = plt.subplots(figsize=figsize)
         test = np.array(self.test_images[idx])
         if show_test:
+            fig, ax = plt.subplots(figsize=figsize)
             ax.imshow(test, cmap='gray')
             xl = plt.xlim()
             yl = plt.ylim()
         else:
-            ymx, xmx, _ = test.shape
+            ymx, xmx = test.shape
             xl = (-0.5, xmx-0.5)
             yl = (ymx-0.5, -0.5)
         # Loop over potentially multiple pages or columns of answer sheet
