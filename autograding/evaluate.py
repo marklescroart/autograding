@@ -1,7 +1,9 @@
 # Grading boilerplate
-import vm_tools as vmt
 import matplotlib.pyplot as plt
+import tqdm
+import tqdm.notebook
 import numpy as np
+import plot_utils
 import copy
 import PIL
 import os
@@ -18,6 +20,18 @@ def _double_gauss(x, mu1, sig1, a1, mu2, sig2, a2):
     g2 = a2 * np.exp(-(x-mu2)**2 / (sig2**2))
     return g1 + g2
 
+def is_notebook():
+    """Test whether code is being run in a jupyter notebook or not"""
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False      # Probably standard Python interpreter
 
 class Evaluation(object):
     """General class for quiz or exam"""
@@ -51,6 +65,7 @@ class Evaluation(object):
             self.class_list_file = os.path.join(fdir, 'class_list.txt')
         else:
             self.class_list_file = class_list_file
+        self.one_off_edges = {}
         self.n_questions = n_questions
         self.n_options = n_options
         # read test images
@@ -67,9 +82,13 @@ class Evaluation(object):
         self.mu2 = np.linspace(210, 240, 3)
 
     def read_images(self, reverse_test_order=False):
+        if is_notebook():
+            progress_bar = tqdm.notebook.tqdm
+        else:
+            progress_bar = tqdm.tqdm
         with Image(filename=self.scanned_file, resolution=200) as img:
             page_images = []
-            for page_wand_image_seq in img.sequence:
+            for page_wand_image_seq in progress_bar(img.sequence):
                 page_wand_image = Image(page_wand_image_seq)
                 page_jpeg_bytes = page_wand_image.make_blob(format="jpeg")
                 page_jpeg_data = io.BytesIO(page_jpeg_bytes)
@@ -96,10 +115,12 @@ class Evaluation(object):
     def fill_absences(self):
         """Inserts blanks into test_images for absent students"""
         absent_indices = []
+        # Reset to no missing exams
+        self.test_images = [x for x in self.test_images if x]
         for a in self.absent_list:
             si = self.get_student(a)
             absent_indices.append(si)
-
+        # Note the "sorted" here, second loop is necessary for proper insertion
         for si in sorted(absent_indices):
             print("Inserting %d" % si)
             self.test_images.insert(si, [])
@@ -116,7 +137,7 @@ class Evaluation(object):
 
 
     def check_names(self, ib=(110, 310, 800, 1600),
-                    nr=None, nc=3, figsize=(16, 16)):
+                    nr=None, nc=3, figsize=16):
         """
         ib : list
             image bounds for location of name; ymin, ymax, xmin, xmax
@@ -124,6 +145,8 @@ class Evaluation(object):
         if nr is None:
             nr = int(np.ceil(len(self.class_list) / nc))
         n_students = len(self.class_list)
+        if not isinstance(figsize, (list, tuple)):
+            figsize = (16, nr)
         fig, axs = plt.subplots(nr, nc, figsize=figsize)
         for test, student, ax in zip(self.test_images, self.class_list, axs.flatten()):
             if test==[]:
@@ -136,8 +159,8 @@ class Evaluation(object):
             ax.axis('off')
         plt.tight_layout()
 
-    def test_question_bounds(self, top_edges, side_edges, student=None, 
-        figsize=(20,20)):
+    def test_question_bounds(self, top_edges=None, side_edges=None, student=None, 
+        figsize=(20,20), define_for_student=False):
         """Display grid over test answers to make sure that answers 
         will be graded correctly.
         """
@@ -145,6 +168,14 @@ class Evaluation(object):
             idx = 0
         else:
             idx = self.get_student(student)
+        
+        if top_edges is None:
+            top_edges = copy.copy(self.top_edges)
+        if side_edges is None:
+            side_edges = copy.copy(self.side_edges)
+
+        if (top_edges is None) or (side_edges is None):
+            raise ValueError("Edges not defined! please pass as inputs.")
 
         if isinstance(side_edges, tuple):
             n_columns = len(side_edges)
@@ -183,8 +214,12 @@ class Evaluation(object):
         plt.grid(axis='both')
 
         # Fix top / side edges for now
-        self.top_edges = top_edges
-        self.side_edges = side_edges
+        if define_for_student:
+            self.one_off_edges[idx] = dict(top_edges=top_edges,
+                                           side_edges=side_edges,)
+        else:
+            self.top_edges = top_edges
+            self.side_edges = side_edges
 
     def get_answers(self, mu1=None, mu2=None, mn=150, mx=245, 
         return_raw=False, show_bounds=False, top_edges=None, side_edges=None):
@@ -203,18 +238,21 @@ class Evaluation(object):
             range of means to attempt for higher value, i.e. not-shaded-in answer, 
             Guassian
         """
-        if side_edges is None:
-            side_edges = copy.copy(self.side_edges)
-        if top_edges is None:
-            top_edges = copy.copy(self.top_edges)
+        def handle_edges(side_edges, top_edges):
+            if side_edges is None:
+                side_edges = copy.copy(self.side_edges)
+            if top_edges is None:
+                top_edges = copy.copy(self.top_edges)
+            if isinstance(side_edges, tuple):
+                n_columns = len(side_edges)
+            else:
+                n_columns = 1
+                side_edges = (side_edges,)
+                top_edges = (top_edges,)
+            return side_edges, top_edges, n_columns
+        _, _, n_columns = handle_edges(side_edges, top_edges)
         n_questions = copy.copy(self.n_questions)
         n_options = copy.copy(self.n_options)
-        if isinstance(side_edges, tuple):
-            n_columns = len(side_edges)
-        else:
-            n_columns = 1
-            side_edges = (side_edges,)
-            top_edges = (top_edges,)
         if not isinstance(n_questions, tuple):
             if n_columns > 1:
                 n_questions = tuple([int(n_questions / n_columns)] * n_columns)
@@ -231,8 +269,15 @@ class Evaluation(object):
         answers = []
         raw = []
         absent = []
+        # Special cases
+        one_off_index = list(self.one_off_edges.keys())
         # Loop over students
         for ii, test in enumerate(self.test_images):
+            if ii in one_off_index:
+                print("Special question locations (top, side edges) for %s"%self.class_list[ii])
+                side_edges, top_edges, n_columns = handle_edges(self.one_off_edges[ii]['side_edges'], self.one_off_edges[ii]['top_edges'])
+            else:
+                side_edges, top_edges, n_columns = handle_edges(self.side_edges, self.top_edges)
             if test==[]:
                 # Absent student
                 absent.append(ii)
@@ -379,7 +424,7 @@ class Evaluation(object):
 
 
     def save_answers(self, student, 
-                     figsize=(8.5, 11), corr_mk='O',
+                     figsize=(8.5, 11), corr_mk='O', fontsize=24,
                      wrong_mk='X', ans_mk='^', show_test=True, fname=None, pts_bystudent=None,
                      extra_points=0, n_extra_questions=0):
         """Save graded exams to pdf files"""
@@ -398,9 +443,12 @@ class Evaluation(object):
             n_options = n_o
         else: 
             n_options = self.n_options
-            
-        side_edges = copy.copy(self.side_edges)
-        top_edges = copy.copy(self.top_edges)
+        if idx in self.one_off_edges:
+            side_edges = copy.copy(self.one_off_edges[idx]['side_edges'])
+            top_edges = copy.copy(self.one_off_edges[idx]['top_edges'])
+        else:
+            side_edges = copy.copy(self.side_edges)
+            top_edges = copy.copy(self.top_edges)
         correct_answers = copy.copy(self.multi_answer_key)
         if isinstance(side_edges, tuple):
             n_columns = len(side_edges)
@@ -424,8 +472,8 @@ class Evaluation(object):
             #print([len(a) for a in correct_answers])
 
         test = np.array(self.test_images[idx])
+        fig, ax = plt.subplots(figsize=figsize)
         if show_test:
-            fig, ax = plt.subplots(figsize=figsize)
             ax.imshow(test, cmap='gray')
             xl = plt.xlim()
             yl = plt.ylim()
@@ -450,9 +498,9 @@ class Evaluation(object):
                 for a in student_answer_index:
                     plt.scatter(sides[int(a)] + sd, t + td, edgecolor=(1.0, 0.5, 0.0), marker=ans_mk, facecolor='None')
                 for c in corr_answer_index:
-                    plt.text(sides[int(c)] + sd, t + td, corr_mk, color='g', fontsize=24, ha='center', va='center')
+                    plt.text(sides[int(c)] + sd, t + td, corr_mk, color='g', fontsize=fontsize, ha='center', va='center')
                 for x in false_alarm:
-                    plt.text(sides[int(x)] + sd, t + td, wrong_mk, color='r', fontsize=24, ha='center', va='center')
+                    plt.text(sides[int(x)] + sd, t + td, wrong_mk, color='r', fontsize=fontsize, ha='center', va='center')
         plt.xlim(xl)
         plt.ylim(yl)
         ax.set_position([0,0,1,1])
@@ -463,14 +511,15 @@ class Evaluation(object):
             fig.savefig(fname, dpi=150)
             plt.close(fig.number)
 
-    def _concat_graded_assignments(self, fnames, out_file):
+    def concat_graded_assignments(self, fnames, out_file, remove_files=False):
         """Concatenate graded exams or quizzes into a single pdf"""
         cmd = ['gs', '-dBATCH', '-dNOPAUSE', '-q', '-sDEVICE=pdfwrite', '-sOutputFile={out_file}'.format(out_file=out_file)]
         for fname in fnames:
             cmd += [fname]
-        subprocess.call(cmd)
-        for f in fnames:
-            os.unlink(f)
+        flag = subprocess.check_output(cmd)
+        if remove_files:
+            for f in fnames:
+                os.unlink(f)
 
 
     def _get_multi_answer_key(self):
@@ -584,7 +633,7 @@ class Evaluation(object):
         # Loop over questions
         for q, ax in zip(range(n_questions), axs.flatten()):
             tfa_students = np.nansum(self.student_answers[:, q], 0)
-            vmt.plot_utils.bar(tfa_students, xw=(np.arange(0, n_options), 0.8),
+            plot_utils.bar(tfa_students, xw=(np.arange(0, n_options), 0.8),
                                lw=0, ax=ax)
             if q in bad_questions:
                 color = 'r'
@@ -602,34 +651,39 @@ class Evaluation(object):
                     ax.text(sa, j*5 + 5, tc[0], ha='center', color='m')
             ax.set_title('Question %d\n(%0.2f%% correct)' % (q+1, scores_byquestion[q]))
             ax.set_ylim(ylim)
-            vmt.plot_utils.open_axes(ax)
+            plot_utils.open_axes(ax)
         plt.tight_layout()
         if title is not None:
             fig.savefig(title, dpi=100)
 
-    def score_hist(self, title=None, figsize=(6, 4)):
+    def score_hist(self, title=None, figsize=(6, 4), use_unadjusted_scores=False):
         """
         Scores should be students x questions"""
         n_students, n_questions = self.points.shape
-        scores_ = self.points.mean(axis=1) * n_questions
+        if (self.adjusted_points is None) or use_unadjusted_scores:
+            scores_ = self.points.sum(axis=1) 
+        else:
+            scores_ = np.sum(self.adjusted_points, axis=1) 
         fig, ax = plt.subplots(figsize=figsize)
         ax.hist(scores_[~np.isnan(scores_)], bins=np.arange(-0.5, n_questions + 0.6, 1))
-        vmt.plot_utils.open_axes(ax)
+        plot_utils.open_axes(ax)
         ax.set_xlabel("Points")
         ax.set_ylabel("Students (count)")
         if title is not None:
             fig.savefig(title, dpi=100)
 
-
-    def question_hist(self, title=None, figsize=(6, 4), reference_lines=(60, 75)):
+    def question_hist(self, title=None, figsize=(6, 4), reference_lines=(60, 75), use_unadjusted_scores=False):
         """Scores should be students x questions"""
         n_students, n_questions = self.points.shape
-        scores_ = np.nanmean(self.points, axis=0) * 100
+        if (self.adjusted_points is None) or use_unadjusted_scores:
+            scores_ = np.nanmean(self.points, axis=0) * 100
+        else:
+            scores_ = np.nanmean(self.adjusted_points, axis=0) * 100
         fig, ax = plt.subplots(figsize=figsize)
-        vmt.plot_utils.bar(scores_, ax=ax)
+        plot_utils.bar(scores_, ax=ax)
         plt.xticks(np.arange(1, n_questions + 1))
         ax.hlines(reference_lines, 0, n_questions + 1, color='r')
-        vmt.plot_utils.open_axes(ax)
+        plot_utils.open_axes(ax)
         ax.set_xlabel("Question")
         ax.set_ylabel("% correct")
         if title is not None:
