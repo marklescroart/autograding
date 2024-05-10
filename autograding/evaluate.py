@@ -36,7 +36,7 @@ def is_notebook():
 class Evaluation(object):
     """General class for quiz or exam"""
     def __init__(self, fdir, scanned_file, answer_file, n_questions=10, n_options=4, 
-        absent_list=(), class_list_file=None, reverse_test_order=False):
+        absent_list=(), class_list_file=None, reverse_test_order=False, rotate=0, extra_credit=None):
         """Class to represent a quiz or exam. 
 
         Methods of this class set up grading, do the
@@ -56,11 +56,14 @@ class Evaluation(object):
             number per column specified by each element of the tuple.
         n_options : scalar or tuple
             number of options per multiple choice or TF question
+        extra_credit : array-like or None
+            array same length as class list that contains points for any extra credit.
         """
         # Set up necessary info
         self.absent_list = absent_list
         self.answer_file = answer_file
-        self.scanned_file = scanned_file        
+        self.scanned_file = scanned_file
+        self.extra_credit = extra_credit
         if class_list_file is None:
             self.class_list_file = os.path.join(fdir, 'class_list.txt')
         else:
@@ -70,7 +73,7 @@ class Evaluation(object):
         self.n_options = n_options
         # read test images
         self.load_class_list()
-        self.read_images(reverse_test_order=reverse_test_order)
+        self.read_images(reverse_test_order=reverse_test_order, rotate=rotate)
         self.load_answers()
         self.adjusted_points = None
         # fill absences
@@ -81,22 +84,35 @@ class Evaluation(object):
         self.mu1 = np.linspace(190, 210, 3)
         self.mu2 = np.linspace(210, 240, 3)
 
-    def read_images(self, reverse_test_order=False):
+    def _read_pdf(self, fpath, rotate=0):
         if is_notebook():
             progress_bar = tqdm.notebook.tqdm
         else:
-            progress_bar = tqdm.tqdm
-        with Image(filename=self.scanned_file, resolution=200) as img:
+            progress_bar = tqdm.tqdm    
+        with Image(filename=fpath, resolution=200) as img:
             page_images = []
             for page_wand_image_seq in progress_bar(img.sequence):
                 page_wand_image = Image(page_wand_image_seq)
                 page_jpeg_bytes = page_wand_image.make_blob(format="jpeg")
                 page_jpeg_data = io.BytesIO(page_jpeg_bytes)
                 page_image = PIL.Image.open(page_jpeg_data)
-                page_images.append(page_image)
+                if rotate != 0:
+                    page_images.append(page_image.rotate(rotate))
+                else:
+                    page_images.append(page_image)
+        return page_images
+    
+    def read_images(self, reverse_test_order=False, rotate=0):
+        page_images = self._read_pdf(self.scanned_file, rotate=rotate)
         if reverse_test_order:
             page_images = page_images[::-1]
         self.test_images = page_images
+
+    def add_students(self, student_names, fname):
+        new_pdf = self._read_pdf(fname)
+        for sn, pdf in zip(student_names, new_pdf):
+            si = self.get_student(sn)
+            self.test_images[si] = pdf
 
     def load_answers(self):
         with open(self.answer_file) as fid:
@@ -189,6 +205,7 @@ class Evaluation(object):
         if not isinstance(n_questions, tuple):
             if n_columns > 1:
                 n_questions = tuple([n_questions/n_columns] * n_columns)
+                n_questions = tuple([int(x) for x in n_questions])
             else:
                 n_questions = (n_questions,)
         if not isinstance(n_options, tuple):
@@ -664,6 +681,8 @@ class Evaluation(object):
             scores_ = self.points.sum(axis=1) 
         else:
             scores_ = np.sum(self.adjusted_points, axis=1) 
+        if self.extra_credit is not None:
+            scores_ += self.extra_credit
         fig, ax = plt.subplots(figsize=figsize)
         ax.hist(scores_[~np.isnan(scores_)], bins=np.arange(-0.5, n_questions + 0.6, 1))
         plot_utils.open_axes(ax)
@@ -709,8 +728,11 @@ class Evaluation(object):
 
     def list_student_scores(self):
         if self.adjusted_points is not None:
-            points = self.adjusted_points
+            points = self.adjusted_points.copy()
         else:
-            points = self.points
-        for s, p in zip(self.class_list, np.round(points.sum(1), decimals=2)):
+            points = self.points.copy()
+        points = points.sum(1)
+        if self.extra_credit is not None:
+            points += self.extra_credit
+        for s, p in zip(self.class_list, np.round(points, decimals=2)):
             print('%-25s : %0.2f'%(s, p))
