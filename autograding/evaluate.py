@@ -36,7 +36,10 @@ def is_notebook():
 class Evaluation(object):
     """General class for quiz or exam"""
     def __init__(self, fdir, scanned_file, answer_file, n_questions=10, n_options=4, 
-        absent_list=(), class_list_file=None, reverse_test_order=False, rotate=0, extra_credit=None):
+        absent_list=(), class_list_file=None, reverse_test_order=False, rotate=0, 
+        alternate_pages=False, 
+        start_page=1,
+        extra_credit=None):
         """Class to represent a quiz or exam. 
 
         Methods of this class set up grading, do the
@@ -73,7 +76,7 @@ class Evaluation(object):
         self.n_options = n_options
         # read test images
         self.load_class_list()
-        self.read_images(reverse_test_order=reverse_test_order, rotate=rotate)
+        self.read_images(reverse_test_order=reverse_test_order, rotate=rotate, alternate_pages=alternate_pages, start_page=start_page)
         self.load_answers()
         self.adjusted_points = None
         # fill absences
@@ -102,10 +105,12 @@ class Evaluation(object):
                     page_images.append(page_image)
         return page_images
     
-    def read_images(self, reverse_test_order=False, rotate=0):
+    def read_images(self, reverse_test_order=False, rotate=0, alternate_pages=False, start_page=1):
         page_images = self._read_pdf(self.scanned_file, rotate=rotate)
         if reverse_test_order:
             page_images = page_images[::-1]
+        if alternate_pages:
+            page_images = page_images[start_page::2]
         self.test_images = page_images
 
     def add_students(self, student_names, fname):
@@ -302,8 +307,8 @@ class Evaluation(object):
             # Loop over columns on answer sheet
             ans_list = []
             for te, se, nq, no in zip(top_edges, side_edges, n_questions, n_options):
-                tops = np.linspace(te[0], te[1], nq + 1).astype(np.int)
-                sides = np.linspace(se[0], se[1], no + 1).astype(np.int)
+                tops = np.linspace(te[0], te[1], nq + 1).astype(int)
+                sides = np.linspace(se[0], se[1], no + 1).astype(int)
 
                 t = np.array(test)
                 ans = np.zeros((nq, no))
@@ -381,7 +386,7 @@ class Evaluation(object):
                 #if np.all(ans > no_answer_thresh):
                 #    continue
                 tmp = (ans > bounds[0]) & (ans < bounds[1])
-                tfans[i, j] = tmp.astype(np.int)
+                tfans[i, j] = tmp.astype(int)
         self.student_answers = tfans
 
 
@@ -549,8 +554,8 @@ class Evaluation(object):
             n_questions = sum(n_questions)
         if isinstance(n_options, (list, tuple)):
             n_options = max(n_options)
-        multi_answer_key = np.zeros((n_questions, n_options), dtype=np.int)
-        multi_answer_n = np.zeros((n_questions,), dtype=np.int)
+        multi_answer_key = np.zeros((n_questions, n_options), dtype=int)
+        multi_answer_n = np.zeros((n_questions,), dtype=int)
         for iquestion, ans in enumerate(self.correct_answers):
             for a in ans:
                 try:
@@ -577,9 +582,9 @@ class Evaluation(object):
         # Single answer questions
         single_answer_key = np.argmax(self.multi_answer_key, axis=1)
         answers = np.argmax(self.student_answers, axis=2)
-        points = (answers == single_answer_key[np.newaxis, :]).astype(np.float)
+        points = (answers == single_answer_key[np.newaxis, :]).astype(float)
         # Multi-answer questions
-        tmp = (self.multi_answer_key == self.student_answers).astype(np.float)
+        tmp = (self.multi_answer_key == self.student_answers).astype(float)
         multi_answer_points = np.zeros_like(points)
         for i, n in enumerate(multi_answer_n):
             multi_answer_points[:, i] = tmp[:, i, :n].sum(1) / n
@@ -644,7 +649,7 @@ class Evaluation(object):
         
         # Set up plot
         abcde = 'ABCDE'
-        n_rows = np.ceil(n_questions / questions_per_row).astype(np.int)
+        n_rows = np.ceil(n_questions / questions_per_row).astype(int)
         bins = np.arange(-0.5, n_options - 0.4, 1)
         fig, axs = plt.subplots(n_rows, 5, figsize=(10, 2 * n_rows))
         # Loop over questions
